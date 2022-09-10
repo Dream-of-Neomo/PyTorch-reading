@@ -16,7 +16,7 @@ CT 데이터는 메타데이터 헤더 정보가 포함된 `.mhd` 파일과 3차
 > Data Parsing ❓  
 > 데이터 파싱은 한국어로는 구문 분석, 정제하기 등으로 불리며 데이터가 알맞은 문법에 맞게 정리되었는지 확인하고, 파싱하는 데이터를 목적에 맞게 이용하기 쉬운 형태로 구성해주는 것을 말한다.  
   
-`candidates.csv` 파일을 파싱한다.
+`candidates.csv` 파일을 파싱한다. 이 파일에는 조직 덩어리가 결절일 가능성이 있는지와 악성 종양 또는 양성 종양 여부, 그리고 그 밖의 정보가 들어 있다. 우리는 이 데이터를 추후에 훈련 dataset과 검증 dataset으로 나눌 것이다.  
 ```console
 (base) song-yeojin@song-yeojin-ui-MacBookAir code % wc -l candidates.csv
   551066 candidates.csv
@@ -36,4 +36,10 @@ seriesuid,coordX,coordY,coordZ,class
  ```
 > 마지막 명령어가 잘 작동하지 않아서 Mac의 문제인가 싶어서 Google Colab에서도 해보았는데 여전히 안된다..아무래도 ,이나 $ 쪽에서 문제가 생긴 것 같은데 ㅠㅠ  
   
-  코드를 보면 wc -l은 파일의 행 개수를 카운트한다. 즉 `candidates.csv`에는 총 551066개의 행이 있음을 알 수 있다.
+  코드를 보면 wc -l은 파일의 행 개수를 카운트한다. 즉 `candidates.csv`에는 총 551066개의 행이 있음을 알 수 있다. head 명령어로 파일의 앞부분 일부를 출력하고, 결절은 1로 나타나므로 1로 끝나는 행의 개수를 센다. 
+ 
+ `annotation.csv` 파일에는 결절로 플래그된 후보들에 대한 정보가 포함되어 있다. 이 중 `diameter_mm` 정보를 주목할 만 하다. 
+ 
+  
+  
+  
