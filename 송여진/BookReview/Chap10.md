@@ -73,4 +73,73 @@ wc -l 명령어를 사용했을 때 나오는 값이 `candidates.csv`와 다르�
 ### 2.2. 애노테이션 데이터와 후보 데이터 합치기
 
 이제 이 두 데이터를 합치는 `GetCandidateInfoList` 함수를 만든다. 각 결절 정보를 담아둘 네임드 튜플 `named tuple` 을 파일 상단에 두고 사용한다. 
+```python
+CandidateInfoTuple = namedtuple(
+    'CandidateInfoTuple',
+    'isNodule_bool, diameter_mm, series_uid, center_xyz',
+)
+```   
+`dsets.py` 파일의 27번째 행이다. 이 튜플은 우리가 원하는 CT 데이터가 빠져 있으므로 훈련 샘플이 아니다. 
+후보 정보 리스트는 결절의 상태, 결절의 직경, 순번과 중심점을 갖는다. `NoduleInfoTuple` 인스턴스 리스트를 만드는 함수는 인메모리 캐싱 데코레이터 `in-memory caching decorator`를 사용하고 디스크 파일 경로를 얻는다.
+```python
+@functools.lru_cache(1)
+def getCandidateInfoList(requireOnDisk_bool=True):
+    mhd_list = glob.glob('data-unversioned/part2/luna/subset*/*.mhd')
+    presentOnDisk_set = {os.path.split(p)[-1][:-4] for p in mhd_list}
+```
+`requireOnDisk_bool`은 디스크에 없는 데이터는 걸러내기 위함이다. 일부 데이터 파일은 파싱에 시간이 걸리므로 함수 호출 결과를 메모리에 캐시한다.  
+앞서 훈련 데이터셋 전체를 사용하면 다운로드도 오래 걸리고 필요한 디스크 공간도 커지기 때문에 훈련 프로그램에 집중하겠다고 말한 바가 있는데, `requireOnDisk_bool`을 사용하여 LUNA 데이터만 사용할 수 있다.   
+적절한 후보 정보를 얻었다면 `annotations.csv` 의 직경 정보를 합치자. 애노테이션 정보는 `series_uid` 로 그룹화하여 두 파일에서 일치하는 행을 찾아내는 키로 사용한다.
+```python
+diameter_dict = {}
+    with open('data/part2/luna/annotations.csv', "r") as f:
+        for row in list(csv.reader(f))[1:]:
+            series_uid = row[0]
+            annotationCenter_xyz = tuple([float(x) for x in row[1:4]])
+            annotationDiameter_mm = float(row[4])
+
+            diameter_dict.setdefault(series_uid, []).append(
+                (annotationCenter_xyz, annotationDiameter_mm)
+            )
+ ```  
+ 그리고 이제 `candidates.csv` 의 정보를 사용하여 전체 후보 리스트를 만든다.   
+ ```python
+    candidateInfo_list = []
+    with open('data/part2/luna/candidates.csv', "r") as f:
+        for row in list(csv.reader(f))[1:]:
+            series_uid = row[0]
+
+            if series_uid not in presentOnDisk_set and requireOnDisk_bool: #series_uid가 없으면 서브셋엔 있지만 디스크엔 없어서 건너뜀
+                continue
+
+            isNodule_bool = bool(int(row[4]))
+            candidateCenter_xyz = tuple([float(x) for x in row[1:4]])
+
+            candidateDiameter_mm = 0.0
+            for annotation_tup in diameter_dict.get(series_uid, []):
+                annotationCenter_xyz, annotationDiameter_mm = annotation_tup
+                for i in range(3):
+                    delta_mm = abs(candidateCenter_xyz[i] - annotationCenter_xyz[i])
+                    if delta_mm > annotationDiameter_mm / 4: # 반경을 얻기 위해 직경을 2로 나누고 결절 센터가 크기 기준으로 떨어진 정도를 반지름의 절반 길이를 기준으로 판정
+                        break
+                else:
+                    candidateDiameter_mm = annotationDiameter_mm
+                    break
+
+            candidateInfo_list.append(CandidateInfoTuple(
+                isNodule_bool,
+                candidateDiameter_mm,
+                series_uid,
+                candidateCenter_xyz,
+            ))
+ ```   
+ 주어진 `series_uid`에 해당하는 후보 엔트리에 대해 앞에서 모은 애노테이션 데이터를 루프 돌리면서 같은 `series_uid`를 찾고 두 센터의 좌표가 같은 결절로 간주할 만큼 가까운 거리에 있는지를 확인한다. 일치하지 않는다면 직경이 0.0인 것으로 간주한다.  
+ 이제 데이터를 정렬 후 반환한다.
+ ```python
+     candidateInfo_list.sort(reverse=True) # 내림차순 정렬
+    return candidateInfo_list
+  ```   
+  `noduleInfo_list`의 튜플 멤버 순서는 이 정렬로 만들어진다. 이렇게 데이터를 정렬하면 일부 CT 단면들을 모아 결절 직경에 대해 잘 분포된 실제 결절을 반영하는 덩어리를 얻어올 수 있게 된다.   
+  ### 개별 CT 스캔 로딩
+  
   
