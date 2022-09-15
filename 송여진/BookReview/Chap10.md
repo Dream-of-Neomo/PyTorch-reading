@@ -140,6 +140,35 @@ diameter_dict = {}
     return candidateInfo_list
   ```   
   `noduleInfo_list`의 튜플 멤버 순서는 이 정렬로 만들어진다. 이렇게 데이터를 정렬하면 일부 CT 단면들을 모아 결절 직경에 대해 잘 분포된 실제 결절을 반영하는 덩어리를 얻어올 수 있게 된다.   
-  ### 개별 CT 스캔 로딩
+  ## 3. 개별 CT 스캔 로딩
+  다음은 디스크에서 CT 데이터를 얻어와 파이썬 객체로 변환해서 3차원 결절 밀도 데이터로 사용할 수 있도록 만드는 작업이다. 결절 애노테이션 정보는 원본 데이터에서 얻어내고자 하는 영역에 대한 맵이라고 생각하면 된다. 이 맵을 활용하여 관심 있는 부분을 추출하려면 데이터를 주소로 접근 가능하게 만들어야 한다.  
+  CT 스캔 파일의 원래 포맷은 `DICOM`이라고 부른다. 이 시절에 만들어진 내용들은 다소 깔끔하지 않다. 하지만 `LUNA`에서는 데이터를 `MetaIO` 포맷으로 변환해 놓았고 사용하기에도 쉽다. :point_right: [링크](https://itk.org/Wiki/MetaIO/Documentation#Quick_Start)  
+  데이터 파일 포맷을 블랙박스로 간주하고 친숙한 numpy 배열로 읽어들이기 위해 `SimpleITK`를 사용할 것이다. 
+  ```python
+  class Ct:
+    def __init__(self, series_uid):
+        mhd_path = glob.glob(
+            'data-unversioned/part2/luna/subset*/{}.mhd'.format(series_uid) #서브셋 위치 상관없으므로 와일드카드 사용
+        )[0]
+
+        ct_mhd = sitk.ReadImage(mhd_path) #sitk는 .raw 파일도 읽음
+        ct_a = np.array(sitk.GetArrayFromImage(ct_mhd), dtype=np.float32) #타입을 np.float3으로 변환하기 위해 array 다시만듬
+```  
+주어진 데이터 샘플을 식별하기 위해 우리는 시리즈 인스턴스 UID `series_uid`를 이용하고 있다. `DICOM`은 개별 파일, 파일 그룹, 처리 과정 등에서 단일 식별자 `UID`를 주로 사용하고 있다. 식별자는 [`UUID`](https://docs.python.org/3.6/library/uuid.html) 과 흡사하지만 생성하는 방식과 포맷은 다르다. 여기에서는 UID를 여러 CT 스캔을 참조 시 사용할 ASCII 문자열로 만든 단일 키로 취급한다.  
+우리의 데이터 중 10개의 서브셋에는 각각 90개의 CT 스캔이 있으며 각 CT 스캔은 `.mhd`와 `.raw` 확장자를 가지는 두 가지 파일로 나뉜다. `ct_a` 는 3차원 배열이다. 세 개의 차원은 공간을 나타내고 하나는 밀도를 나타낸다. 파이토치 텐서에서 채널 정보는 네 번째 차원으로 표현되며 크기는 1이다.  
   
-  
+****
+### 3.1. 하운스필드 단위(Hounsfield Unit, HU)  
+`__init__` 메소드 작성 시에는 `ct_a` 값을 지워줄 필요가 있다. CT 스캔 복셀은 [하운스필드 단위](https://en.wikipedia.org/wiki/Houndfield_scale)로 표시되어 있는데, 예시로 공기는 -1,000HU이고 물은 0HU이며 뼈는 +1,000HU이다. HU 값은 통상적으로 부호화된 12비트 정수로 디스크에 저장한다.  
+어떤 CT 스캐너는 스캔 영역을 벗어난 복셀을 나타내기 위해 밀도에 음의 값을 사용한다. 우리의 경우 환자의 몸 외부는 모두 공기이므로 값이 -1,000HU 이하인 경우에는 값을 버린다. 또한 뼈나 금속 이식물에 해당하는 밀도값도 필요 없으므로 2g/cc(1,000HU) 이상인 경우에도 잘라낸다. 
+```python
+ ct_a.clip(-1000, 1000, ct_a)
+ ```  
+ 우리가 관심있는 종양의 경우 대체로 1g/cc(0HU) 근처이다. 따라서 1g/cc가 아닌 경우에도 걸러낸다. 데이터에서 이와 같이 이상값 `outlier`을 제거한다. 이렇게 만들어진 값을 self에 할당한다.
+ ```pyton
+         self.series_uid = series_uid
+        self.hu_a = ct_a
+ ```   
+
+## 4. 환자 좌표계를 사용해 결절 위치 정하기   
+통상적으로 딥러닝 모델은 고정된 크기의 입력을 필요로 한다. 입력 뉴런 수가 고정되어 있기 때문이다. 모델의 훈련에는 CT 스캔에서 깔끔하게 잘라낸 중심이 잘 잡힌 후보 데이터를 사용해서 모델이 입력 언저리에 감춰진 결절을 탐지해내는 일은 없게 할 예정이다.  
